@@ -1,0 +1,387 @@
+{
+  "name": "客户反馈收集和分析自动化工作流",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "每日9点触发",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "getAll",
+        "q": "label:客户反馈 newer_than:1d",
+        "format": "resolved"
+      },
+      "id": "gmail-node",
+      "name": "获取客户反馈邮件",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": "{{$node['Start'].json['spreadsheetId']}}",
+        "sheetName": "Form Responses 1",
+        "options": {
+          "returnAllMatches": true
+        }
+      },
+      "id": "google-sheets-read",
+      "name": "读取表单反馈",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 2,
+      "position": [450, 450],
+      "credentials": {
+        "googleSheetsOAuth2": {
+          "id": "2",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT customer_id, order_id, order_date, total_amount FROM orders WHERE order_date >= NOW() - INTERVAL 7 DAY",
+        "additionalFields": {}
+      },
+      "id": "mysql-query",
+      "name": "查询订单信息",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 1,
+      "position": [450, 600],
+      "credentials": {
+        "mySql": {
+          "id": "3",
+          "name": "MySQL Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "modelId": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "你是一个客户反馈分析专家。请分析以下客户反馈内容，并返回JSON格式的结果，包含：sentiment（正面/负面/中性）、keywords（关键词数组）、summary（摘要）、priority（优先级：高/中/低）"
+            },
+            {
+              "role": "user",
+              "content": "={{$json['text']}}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      },
+      "id": "openai-analysis",
+      "name": "AI情感分析",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [750, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "4",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// 合并和处理所有数据\nconst emailFeedbacks = $input.all()[0].json;\nconst formFeedbacks = $input.all()[1].json;\nconst orderData = $input.all()[2].json;\n\n// 处理并关联数据\nconst processedData = [];\n\n// 处理邮件反馈\nif (emailFeedbacks) {\n  emailFeedbacks.forEach(email => {\n    const analysis = $node['openai-analysis'].json;\n    processedData.push({\n      source: 'email',\n      customer_email: email.from,\n      content: email.text,\n      sentiment: analysis.sentiment,\n      keywords: analysis.keywords,\n      summary: analysis.summary,\n      priority: analysis.priority,\n      timestamp: new Date().toISOString()\n    });\n  });\n}\n\n// 计算整体满意度\nconst totalFeedbacks = processedData.length;\nconst positiveFeedbacks = processedData.filter(f => f.sentiment === '正面').length;\nconst satisfactionRate = (positiveFeedbacks / totalFeedbacks * 100).toFixed(2);\n\nreturn {\n  processedFeedbacks: processedData,\n  statistics: {\n    total: totalFeedbacks,\n    positive: positiveFeedbacks,\n    negative: processedData.filter(f => f.sentiment === '负面').length,\n    neutral: processedData.filter(f => f.sentiment === '中性').length,\n    satisfactionRate: satisfactionRate + '%'\n  }\n};"
+      },
+      "id": "function-merge",
+      "name": "数据处理和关联",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [950, 450]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json['sentiment']}}",
+              "value2": "负面"
+            }
+          ]
+        }
+      },
+      "id": "if-negative",
+      "name": "检查负面反馈",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1150, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "channel": "#customer-service",
+        "text": "⚠️ 收到负面客户反馈\n\n客户：{{$json['customer_email']}}\n内容摘要：{{$json['summary']}}\n优先级：{{$json['priority']}}\n\n请及时处理！",
+        "attachments": [],
+        "otherOptions": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack通知",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [1350, 250],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "5",
+          "name": "Slack OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "customer_feedbacks",
+        "columns": "source,customer_email,content,sentiment,keywords,summary,priority,created_at",
+        "additionalFields": {}
+      },
+      "id": "postgres-insert",
+      "name": "存储到数据库",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1150, 450],
+      "credentials": {
+        "postgres": {
+          "id": "6",
+          "name": "PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": "{{$node['Start'].json['reportSheetId']}}",
+        "sheetName": "反馈汇总",
+        "options": {}
+      },
+      "id": "sheets-update",
+      "name": "更新汇总表",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 2,
+      "position": [1150, 600],
+      "credentials": {
+        "googleSheetsOAuth2": {
+          "id": "2",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@company.com",
+        "toEmail": "={{$json['customer_email']}}",
+        "subject": "感谢您的反馈",
+        "text": "尊敬的客户，\n\n我们已收到您的反馈，非常感谢您抽出时间与我们分享您的想法。\n\n我们的团队将认真处理您的反馈，并在必要时与您联系。\n\n祝好！\n客服团队",
+        "options": {}
+      },
+      "id": "email-reply",
+      "name": "自动回复邮件",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1350, 350],
+      "credentials": {
+        "smtp": {
+          "id": "7",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "card",
+        "operation": "create",
+        "boardId": "{{$node['Start'].json['trelloBoardId']}}",
+        "listId": "{{$node['Start'].json['trelloListId']}}",
+        "name": "跟进反馈 - {{$json['customer_email']}}",
+        "description": "优先级：{{$json['priority']}}\n\n内容：{{$json['summary']}}\n\n原始反馈：{{$json['content']}}",
+        "additionalFields": {
+          "due": "={{$now.plus(3, 'days').toISO()}}"
+        }
+      },
+      "id": "trello-card",
+      "name": "创建Trello任务",
+      "type": "n8n-nodes-base.trello",
+      "typeVersion": 1,
+      "position": [1350, 500],
+      "credentials": {
+        "trelloApi": {
+          "id": "8",
+          "name": "Trello API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "每日9点触发": {
+      "main": [
+        [
+          {
+            "node": "获取客户反馈邮件",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "读取表单反馈",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "查询订单信息",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取客户反馈邮件": {
+      "main": [
+        [
+          {
+            "node": "AI情感分析",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI情感分析": {
+      "main": [
+        [
+          {
+            "node": "数据处理和关联",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "读取表单反馈": {
+      "main": [
+        [
+          {
+            "node": "数据处理和关联",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询订单信息": {
+      "main": [
+        [
+          {
+            "node": "数据处理和关联",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "数据处理和关联": {
+      "main": [
+        [
+          {
+            "node": "检查负面反馈",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "存储到数据库",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "更新汇总表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查负面反馈": {
+      "main": [
+        [
+          {
+            "node": "Slack通知",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "自动回复邮件",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "创建Trello任务",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "01234567-89ab-cdef-0123-456789abcdef",
+  "id": "workflow_001",
+  "meta": {
+    "templateId": "customer-feedback-automation"
+  },
+  "tags": [
+    {
+      "id": "1",
+      "name": "客户服务"
+    },
+    {
+      "id": "2", 
+      "name": "自动化"
+    },
+    {
+      "id": "3",
+      "name": "AI分析"
+    }
+  ]
+} 

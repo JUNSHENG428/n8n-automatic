@@ -1,0 +1,382 @@
+{
+  "name": "每日天气预报智能推送系统",
+  "nodes": [
+    {
+      "id": "schedule_trigger_1",
+      "name": "定时触发器",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 8,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "set_config_2",
+      "name": "设置配置参数",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "city",
+              "value": "={{ $env.WEATHER_CITY || 'Beijing' }}"
+            },
+            {
+              "name": "language",
+              "value": "zh"
+            }
+          ],
+          "number": [
+            {
+              "name": "retryCount",
+              "value": 0
+            },
+            {
+              "name": "maxRetries",
+              "value": 3
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http_weather_3",
+      "name": "获取天气信息",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [600, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.weatherapi.com/v1/forecast.json",
+        "authentication": "none",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $env.WEATHER_API_KEY }}"
+            },
+            {
+              "name": "q", 
+              "value": "={{ $json.city }}"
+            },
+            {
+              "name": "days",
+              "value": "3"
+            },
+            {
+              "name": "aqi",
+              "value": "yes"
+            },
+            {
+              "name": "alerts",
+              "value": "yes"
+            },
+            {
+              "name": "lang",
+              "value": "={{ $json.language }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "if_success_4",
+      "name": "检查API响应",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [800, 300],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error ? false : true }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "format_weather_5",
+      "name": "格式化天气数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1000, 200],
+      "parameters": {
+        "jsCode": "const weatherData = items[0].json;\nconst location = weatherData.location;\nconst current = weatherData.current;\nconst forecast = weatherData.forecast.forecastday;\n\n// 格式化当前天气\nconst currentWeather = {\n  城市: `${location.name}, ${location.country}`,\n  更新时间: new Date(location.localtime).toLocaleString('zh-CN'),\n  温度: `${current.temp_c}°C`,\n  体感温度: `${current.feelslike_c}°C`,\n  天气状况: current.condition.text,\n  湿度: `${current.humidity}%`,\n  风速: `${current.wind_kph} km/h`,\n  风向: current.wind_dir,\n  能见度: `${current.vis_km} km`,\n  紫外线指数: current.uv,\n  空气质量: current.air_quality ? `PM2.5: ${current.air_quality.pm2_5}` : '暂无数据'\n};\n\n// 格式化未来天气预报\nconst forecastData = forecast.map(day => ({\n  日期: new Date(day.date).toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' }),\n  最高温度: `${day.day.maxtemp_c}°C`,\n  最低温度: `${day.day.mintemp_c}°C`,\n  天气: day.day.condition.text,\n  降雨概率: `${day.day.daily_chance_of_rain}%`,\n  日出: day.astro.sunrise,\n  日落: day.astro.sunset\n}));\n\n// 生成建议\nconst suggestions = [];\nif (current.temp_c < 10) suggestions.push('🧥 今天较冷，请注意保暖');\nif (current.temp_c > 30) suggestions.push('🌞 今天较热，请注意防晒');\nif (forecast[0].day.daily_chance_of_rain > 50) suggestions.push('☔ 今天可能下雨，请携带雨具');\nif (current.uv > 6) suggestions.push('🕶️ 紫外线较强，建议涂抹防晒霜');\n\nreturn [{\n  json: {\n    currentWeather,\n    forecastData,\n    suggestions,\n    alerts: weatherData.alerts?.alert || []\n  }\n}];"
+      }
+    },
+    {
+      "id": "generate_email_6",
+      "name": "生成邮件内容",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 200],
+      "parameters": {
+        "jsCode": "const data = items[0].json;\nconst { currentWeather, forecastData, suggestions, alerts } = data;\n\n// 生成HTML邮件内容\nlet htmlContent = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; padding: 20px; }\n    .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }\n    .content { background-color: #f9f9f9; padding: 20px; border-radius: 0 0 10px 10px; }\n    .weather-card { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }\n    .forecast-item { display: inline-block; margin: 10px; padding: 10px; background: #e3f2fd; border-radius: 5px; }\n    .suggestion { padding: 10px; margin: 5px 0; background: #fff3cd; border-left: 4px solid #ffc107; }\n    .alert { padding: 10px; margin: 10px 0; background: #f8d7da; border-left: 4px solid #dc3545; }\n    table { width: 100%; border-collapse: collapse; }\n    td { padding: 8px; border-bottom: 1px solid #ddd; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>📍 ${currentWeather.城市} - 今日天气预报</h1>\n      <p>${currentWeather.更新时间}</p>\n    </div>\n    <div class=\"content\">\n      <div class=\"weather-card\">\n        <h2>🌡️ 当前天气</h2>\n        <table>\n          <tr><td><strong>温度：</strong></td><td>${currentWeather.温度} (体感 ${currentWeather.体感温度})</td></tr>\n          <tr><td><strong>天气：</strong></td><td>${currentWeather.天气状况}</td></tr>\n          <tr><td><strong>湿度：</strong></td><td>${currentWeather.湿度}</td></tr>\n          <tr><td><strong>风况：</strong></td><td>${currentWeather.风向} ${currentWeather.风速}</td></tr>\n          <tr><td><strong>能见度：</strong></td><td>${currentWeather.能见度}</td></tr>\n          <tr><td><strong>紫外线：</strong></td><td>${currentWeather.紫外线指数}</td></tr>\n          <tr><td><strong>空气质量：</strong></td><td>${currentWeather.空气质量}</td></tr>\n        </table>\n      </div>\n`;\n\n// 添加未来天气预报\nhtmlContent += `\n      <div class=\"weather-card\">\n        <h2>📅 未来三天预报</h2>\n`;\n\nforecastData.forEach(day => {\n  htmlContent += `\n        <div class=\"forecast-item\">\n          <strong>${day.日期}</strong><br>\n          🌡️ ${day.最低温度} - ${day.最高温度}<br>\n          ${day.天气}<br>\n          💧 降雨概率: ${day.降雨概率}<br>\n          🌅 ${day.日出} - 🌆 ${day.日落}\n        </div>\n  `;\n});\n\nhtmlContent += '</div>';\n\n// 添加建议\nif (suggestions.length > 0) {\n  htmlContent += '<div class=\"weather-card\"><h2>💡 今日建议</h2>';\n  suggestions.forEach(suggestion => {\n    htmlContent += `<div class=\"suggestion\">${suggestion}</div>`;\n  });\n  htmlContent += '</div>';\n}\n\n// 添加天气预警\nif (alerts.length > 0) {\n  htmlContent += '<div class=\"weather-card\"><h2>⚠️ 天气预警</h2>';\n  alerts.forEach(alert => {\n    htmlContent += `<div class=\"alert\"><strong>${alert.headline}</strong><br>${alert.desc}</div>`;\n  });\n  htmlContent += '</div>';\n}\n\nhtmlContent += `\n    </div>\n  </div>\n</body>\n</html>\n`;\n\n// 生成纯文本版本\nlet textContent = `${currentWeather.城市} - 今日天气预报\\n\\n`;\ntextContent += `当前天气：\\n`;\ntextContent += `温度: ${currentWeather.温度} (体感 ${currentWeather.体感温度})\\n`;\ntextContent += `天气: ${currentWeather.天气状况}\\n`;\ntextContent += `湿度: ${currentWeather.湿度}\\n`;\ntextContent += `风况: ${currentWeather.风向} ${currentWeather.风速}\\n\\n`;\n\ntextContent += `未来三天预报：\\n`;\nforecastData.forEach(day => {\n  textContent += `\\n${day.日期}\\n`;\n  textContent += `温度: ${day.最低温度} - ${day.最高温度}\\n`;\n  textContent += `天气: ${day.天气}\\n`;\n  textContent += `降雨概率: ${day.降雨概率}\\n`;\n});\n\nif (suggestions.length > 0) {\n  textContent += `\\n今日建议：\\n`;\n  suggestions.forEach(suggestion => {\n    textContent += `- ${suggestion}\\n`;\n  });\n}\n\nreturn [{\n  json: {\n    subject: `📍 ${currentWeather.城市} - ${currentWeather.天气状况} ${currentWeather.温度}`,\n    htmlContent,\n    textContent,\n    toEmail: `{{ $env.RECIPIENT_EMAIL || 'user@example.com' }}`\n  }\n}];"
+      }
+    },
+    {
+      "id": "send_email_7",
+      "name": "发送邮件",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1400, 200],
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM_EMAIL || 'weather@yourdomain.com' }}",
+        "toEmail": "={{ $json.toEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.htmlContent }}",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      }
+    },
+    {
+      "id": "wait_retry_9",
+      "name": "等待重试",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [800, 500],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "increment_retry_10",
+      "name": "增加重试次数",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [1000, 500],
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "city",
+              "value": "={{ $json.city }}"
+            },
+            {
+              "name": "language",
+              "value": "={{ $json.language }}"
+            }
+          ],
+          "number": [
+            {
+              "name": "retryCount",
+              "value": "={{ $json.retryCount + 1 }}"
+            },
+            {
+              "name": "maxRetries",
+              "value": "={{ $json.maxRetries }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "check_retry_11",
+      "name": "检查重试次数",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1200, 500],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.retryCount < $json.maxRetries }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "error_notification_12",
+      "name": "发送错误通知",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1400, 600],
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM_EMAIL || 'system@yourdomain.com' }}",
+        "toEmail": "={{ $env.ADMIN_EMAIL || 'admin@yourdomain.com' }}",
+        "subject": "❌ 天气预报工作流执行失败",
+        "emailType": "text",
+        "message": "天气预报工作流执行失败\n\n错误详情：\n{{ $('获取天气信息').item.json.error || '未知错误' }}\n\n城市：{{ $json.city }}\n重试次数：{{ $json.retryCount }}\n\n请检查：\n1. Weather API密钥是否有效\n2. 网络连接是否正常\n3. API配额是否充足",
+        "options": {}
+      }
+    },
+    {
+      "id": "log_error_13",
+      "name": "记录错误日志",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1600, 600],
+      "parameters": {
+        "jsCode": "console.error('Weather workflow failed:', {\n  city: items[0].json.city,\n  retryCount: items[0].json.retryCount,\n  error: items[0].json.error || 'Unknown error',\n  timestamp: new Date().toISOString()\n});\n\nreturn [{\n  json: {\n    status: 'failed',\n    timestamp: new Date().toISOString()\n  }\n}];"
+      }
+    }
+  ],
+  "connections": {
+    "定时触发器": {
+      "main": [
+        [
+          {
+            "node": "设置配置参数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "设置配置参数": {
+      "main": [
+        [
+          {
+            "node": "获取天气信息",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取天气信息": {
+      "main": [
+        [
+          {
+            "node": "检查API响应",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查API响应": {
+      "main": [
+        [
+          {
+            "node": "格式化天气数据",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "等待重试",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "格式化天气数据": {
+      "main": [
+        [
+          {
+            "node": "生成邮件内容",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成邮件内容": {
+      "main": [
+        [
+          {
+            "node": "发送邮件",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "发送邮件": {
+      "main": []
+    },
+    "等待重试": {
+      "main": [
+        [
+          {
+            "node": "增加重试次数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "增加重试次数": {
+      "main": [
+        [
+          {
+            "node": "检查重试次数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查重试次数": {
+      "main": [
+        [
+          {
+            "node": "获取天气信息",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "发送错误通知",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "发送错误通知": {
+      "main": [
+        [
+          {
+            "node": "记录错误日志",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 300,
+    "timezone": "Asia/Shanghai"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": false
+} 

@@ -1,0 +1,151 @@
+{
+  "name": "每日天气预报邮件通知",
+  "nodes": [
+    {
+      "id": "manual_trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "parameters": {}
+    },
+    {
+      "id": "set_config",
+      "name": "设置参数",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "city",
+              "value": "Beijing"
+            },
+            {
+              "name": "apiKey",
+              "value": "your_weather_api_key_here"
+            },
+            {
+              "name": "recipientEmail",
+              "value": "recipient@example.com"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http_weather",
+      "name": "获取天气",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [650, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.weatherapi.com/v1/forecast.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $json.apiKey }}"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.city }}"
+            },
+            {
+              "name": "days",
+              "value": "3"
+            },
+            {
+              "name": "lang",
+              "value": "zh"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "format_email",
+      "name": "格式化邮件",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "parameters": {
+        "jsCode": "// 获取天气数据\nconst weatherData = items[0].json;\nconst location = weatherData.location;\nconst current = weatherData.current;\nconst forecast = weatherData.forecast.forecastday;\n\n// 生成邮件标题\nconst subject = `${location.name} 天气预报 - ${current.condition.text} ${current.temp_c}°C`;\n\n// 生成邮件内容\nlet emailBody = `\n<h2>📍 ${location.name}, ${location.country}</h2>\n<p>更新时间: ${new Date(location.localtime).toLocaleString('zh-CN')}</p>\n\n<h3>🌡️ 当前天气</h3>\n<ul>\n  <li>温度: ${current.temp_c}°C (体感 ${current.feelslike_c}°C)</li>\n  <li>天气: ${current.condition.text}</li>\n  <li>湿度: ${current.humidity}%</li>\n  <li>风速: ${current.wind_kph} km/h ${current.wind_dir}</li>\n  <li>能见度: ${current.vis_km} km</li>\n  <li>紫外线指数: ${current.uv}</li>\n</ul>\n\n<h3>📅 未来三天预报</h3>\n`;\n\n// 添加未来天气\nforecast.forEach(day => {\n  emailBody += `\n<h4>${new Date(day.date).toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}</h4>\n<ul>\n  <li>温度: ${day.day.mintemp_c}°C - ${day.day.maxtemp_c}°C</li>\n  <li>天气: ${day.day.condition.text}</li>\n  <li>降雨概率: ${day.day.daily_chance_of_rain}%</li>\n  <li>日出/日落: ${day.astro.sunrise} / ${day.astro.sunset}</li>\n</ul>\n`;\n});\n\n// 添加建议\nlet suggestions = '<h3>💡 今日建议</h3><ul>';\nif (current.temp_c < 10) suggestions += '<li>🧥 今天较冷，请注意保暖</li>';\nif (current.temp_c > 30) suggestions += '<li>🌞 今天较热，请注意防晒</li>';\nif (forecast[0].day.daily_chance_of_rain > 50) suggestions += '<li>☔ 今天可能下雨，请携带雨具</li>';\nif (current.uv > 6) suggestions += '<li>🕶️ 紫外线较强，建议涂抹防晒霜</li>';\nsuggestions += '</ul>';\n\nemailBody += suggestions;\n\n// 设置收件人邮箱\nconst recipientEmail = items[0].json.recipientEmail || 'user@example.com';\n\nreturn [{\n  json: {\n    to: recipientEmail,\n    subject: subject,\n    html: emailBody\n  }\n}];"
+      }
+    },
+    {
+      "id": "send_email",
+      "name": "发送邮件",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1050, 300],
+      "parameters": {
+        "fromEmail": "weather-notification@yourdomain.com",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "手动触发": {
+      "main": [
+        [
+          {
+            "node": "设置参数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "设置参数": {
+      "main": [
+        [
+          {
+            "node": "获取天气",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取天气": {
+      "main": [
+        [
+          {
+            "node": "格式化邮件",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "格式化邮件": {
+      "main": [
+        [
+          {
+            "node": "发送邮件",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Shanghai"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": false
+} 
