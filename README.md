@@ -23,8 +23,8 @@
 
 1. 克隆项目
 ```bash
-git clone https://github.com/yourusername/n8n-workflow-generator.git
-cd n8n-workflow-generator
+git clone https://github.com/JUNSHENG428/n8n-automatic.git
+cd n8n-automatic
 ```
 
 2. 安装依赖
@@ -97,4 +97,4 @@ MIT License
 
 ---
 
-Made with ❤️ by [Your Name] 
+Made with ❤️ by JUNSHENG428
